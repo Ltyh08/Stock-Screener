@@ -5,7 +5,8 @@ import datetime as dt
 import os
 from dotenv import load_dotenv
 
-load_dotenv()  # Loads variables from .env
+# Load .env file and get the Excel output path
+load_dotenv()
 file_path = os.getenv("EXCEL_OUTPUT_PATH")
 if not file_path:
     raise ValueError("EXCEL_OUTPUT_PATH not set in .env file.")
@@ -17,53 +18,58 @@ stocks = ['NVDA', 'AMD', 'AAPL']
 start = dt.datetime(2000, 1, 1)
 now = dt.datetime.now()
 
-# Create an Excel writer object
-with pd.ExcelWriter('stock_analysis.xlsx', engine='xlsxwriter') as writer:
-    for ticker in stocks:
-        print(f"\nFetching data for {ticker}...")
-        df = yf.download(ticker, start=start, end=now, auto_adjust=False)
+# Ensure the file exists before appending to it
+if not os.path.exists(file_path):
+    with pd.ExcelWriter(file_path, engine='openpyxl', mode='w') as writer:
+        pass  # Create an empty Excel file
 
-        if df.empty:
-            print(f"No data found for {ticker}")
-            continue
+# Loop through each stock ticker and fetch data
+for ticker in stocks:
+    print(f"\nFetching data for {ticker}...")
+    df = yf.download(ticker, start=start, end=now, auto_adjust=False)
 
-        # Moving Averages
-        df['3MA'] = df['Adj Close'].rolling(window=3).mean()
-        df['5MA'] = df['Adj Close'].rolling(window=5).mean()
-        df['20MA'] = df['Adj Close'].rolling(window=20).mean()
-        df['50MA'] = df['Adj Close'].rolling(window=50).mean()
-        df['200MA'] = df['Adj Close'].rolling(window=200).mean()
+    if df.empty:
+        print(f"No data found for {ticker}")
+        continue
 
-        # Turnover (in millions)
-        df['Turnover (Millions)'] = (df['Volume'] * df['Close']) / 1_000_000
+    # Moving Averages
+    df['3MA'] = df['Adj Close'].rolling(window=3).mean()
+    df['5MA'] = df['Adj Close'].rolling(window=5).mean()
+    df['20MA'] = df['Adj Close'].rolling(window=20).mean()
+    df['50MA'] = df['Adj Close'].rolling(window=50).mean()
+    df['200MA'] = df['Adj Close'].rolling(window=200).mean()
 
-        # Bollinger Bands
-        df['STD20'] = df['Adj Close'].rolling(window=20).std()
-        df['UpperBand'] = df['20MA'] + 2 * df['STD20']
-        df['LowerBand'] = df['20MA'] - 2 * df['STD20']
+    # Turnover (in millions)
+    df['Turnover (Millions)'] = (df['Volume'] * df['Close']) / 1_000_000
 
-        # Daily Return in %
-        df['Daily_Return (%)'] = df['Adj Close'].pct_change() * 100
+    # Bollinger Bands
+    df['STD20'] = df['Adj Close'].rolling(window=20).std()
+    df['UpperBand'] = df['20MA'] + 2 * df['STD20']
+    df['LowerBand'] = df['20MA'] - 2 * df['STD20']
 
-        # RSI (14-day)
-        delta = df['Adj Close'].diff()
-        gain = delta.where(delta > 0, 0)
-        loss = -delta.where(delta < 0, 0)
-        avg_gain = gain.rolling(window=14).mean()
-        avg_loss = loss.rolling(window=14).mean()
-        rs = avg_gain / avg_loss
-        df['RSI'] = 100 - (100 / (1 + rs))
+    # Daily Return in %
+    df['Daily_Return (%)'] = df['Adj Close'].pct_change() * 100
 
-        # Volatility (20-day)
-        df['Volatility_20D'] = df['Adj Close'].rolling(window=20).std()
+    # RSI (14-day)
+    delta = df['Adj Close'].diff()
+    gain = delta.where(delta > 0, 0)
+    loss = -delta.where(delta < 0, 0)
+    avg_gain = gain.rolling(window=14).mean()
+    avg_loss = loss.rolling(window=14).mean()
+    rs = avg_gain / avg_loss
+    df['RSI'] = 100 - (100 / (1 + rs))
 
-        # MACD
-        df['EMA12'] = df['Adj Close'].ewm(span=12, adjust=False).mean()
-        df['EMA26'] = df['Adj Close'].ewm(span=26, adjust=False).mean()
-        df['MACD'] = df['EMA12'] - df['EMA26']
-        df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+    # Volatility (20-day)
+    df['Volatility_20D'] = df['Adj Close'].rolling(window=20).std()
 
-        # Write to a sheet named after the ticker
+    # MACD
+    df['EMA12'] = df['Adj Close'].ewm(span=12, adjust=False).mean()
+    df['EMA26'] = df['Adj Close'].ewm(span=26, adjust=False).mean()
+    df['MACD'] = df['EMA12'] - df['EMA26']
+    df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+
+    # Save to Excel sheet named after the ticker, replacing the sheet but preserving workbook
+    with pd.ExcelWriter(file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
         df.to_excel(writer, sheet_name=ticker)
 
-print("\nAll data written to stock_analysis.xlsx")
+print(f"\n✅ All data written to {file_path} without overwriting formatting.")
