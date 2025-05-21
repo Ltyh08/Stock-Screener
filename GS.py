@@ -12,7 +12,7 @@ if not file_path:
     raise ValueError("EXCEL_OUTPUT_PATH not set in .env file.")
 
 # List of stock ticker symbols
-stocks = ['NVDA', 'AMD', 'AAPL']
+stocks = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 'AMD']
 
 # Define the start and end dates
 start = dt.datetime(2000, 1, 1)
@@ -39,6 +39,10 @@ for ticker in stocks:
     df['50MA'] = df['Adj Close'].rolling(window=50).mean()
     df['200MA'] = df['Adj Close'].rolling(window=200).mean()
 
+    #High Lows
+    df['52W_High'] = df['Adj Close'].rolling(window=252).max()
+    df['52W_Low'] = df['Adj Close'].rolling(window=252).min()
+
     # Turnover (in millions)
     df['Turnover (Millions)'] = (df['Volume'] * df['Close']) / 1_000_000
 
@@ -54,10 +58,12 @@ for ticker in stocks:
     delta = df['Adj Close'].diff()
     gain = delta.where(delta > 0, 0)
     loss = -delta.where(delta < 0, 0)
-    avg_gain = gain.rolling(window=14).mean()
-    avg_loss = loss.rolling(window=14).mean()
+
+    avg_gain = gain.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
     rs = avg_gain / avg_loss
     df['RSI'] = 100 - (100 / (1 + rs))
+
 
     # Volatility (20-day)
     df['Volatility_20D'] = df['Adj Close'].rolling(window=20).std()
@@ -67,6 +73,14 @@ for ticker in stocks:
     df['EMA26'] = df['Adj Close'].ewm(span=26, adjust=False).mean()
     df['MACD'] = df['EMA12'] - df['EMA26']
     df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+    
+    #ATR
+    df['H-L'] = df['High'] - df['Low']
+    df['H-PC'] = abs(df['High'] - df['Close'].shift(1))
+    df['L-PC'] = abs(df['Low'] - df['Close'].shift(1))
+    df['TR'] = df[['H-L', 'H-PC', 'L-PC']].max(axis=1)
+    df['ATR_14'] = df['TR'].rolling(window=14).mean()
+
 
     # Save to Excel sheet named after the ticker, replacing the sheet but preserving workbook
     with pd.ExcelWriter(file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
