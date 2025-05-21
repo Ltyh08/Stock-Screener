@@ -1,102 +1,73 @@
-import datetime as dt
 import pandas as pd
-from pandas_datareader import data as pdr
-import yfinance as yf
-from tkinter import Tk
-from tkinter.filedialog import askopenfilename
 import os
-from pandas import ExcelWriter
-start =dt.datetime(2017,12,1)
-now = dt.datetime.now()
+from dotenv import load_dotenv
 
-root = Tk()
-ftypes = [(".xlsm","*.xlsx",".xls")]
-ttl  = "Title"
-dir1 = 'C:\\'
-filePath = askopenfilename(filetypes = ftypes, initialdir = dir1, title = ttl)
+# Load Excel file path from .env
+load_dotenv()
+file_path = os.getenv("EXCEL_OUTPUT_PATH")
+if not file_path or not os.path.exists(file_path):
+    raise FileNotFoundError("Excel file not found or path not set in .env")
 
-stocklist = pd.read_excel(filePath)
-stocklist=stocklist.head()
+# Get all sheet names (tickers) from the Excel file
+xls = pd.ExcelFile(file_path)
+stocks = xls.sheet_names
 
-exportList= pd.DataFrame(columns=['Stock', "RS_Rating", "50 Day MA", "150 Day Ma", "200 Day MA", "52 Week Low", "52 week High"])
+# Screening results
+screened_stocks = []
 
-for i in stocklist.index:
-	stock=str(stocklist["Symbol"][i])
-	RS_Rating=stocklist["RS Rating"][i]
+# Screening function based on Minervini's template
+def meets_minervini_criteria(df, ticker):
+    latest = df.iloc[-1]
 
-	try:
-		df = pdr.get_data_yahoo(stock, start, now)
+    if len(df) < 220:
+        print(f"⚠ {ticker}: Not enough data to evaluate 200MA slope.")
+        return False
 
-		smaUsed=[50,150,200]
-		for x in smaUsed:
-			sma=x
-			df["SMA_"+str(sma)]=round(df.iloc[:,4].rolling(window=sma).mean(),2)
+    ma_200_now = df['200MA'].iloc[-1]
+    ma_200_past = df['200MA'].iloc[-21]
 
+    # Condition 1
+    if not (latest['Close'] > latest['50MA'] > latest['150MA'] > latest['200MA']):
+        print(f"❌ {ticker}: Price/MA hierarchy not satisfied (Close: {latest['Close']}, 50MA: {latest['50MA']}, 150MA: {latest['150MA']}, 200MA: {latest['200MA']})")
+        return False
 
-		currentClose=df["Adj Close"][-1]
-		moving_average_50=df["SMA_50"][-1]
-		moving_average_150=df["SMA_150"][-1]
-		moving_average_200=df["SMA_200"][-1]
-		low_of_52week=min(df["Adj Close"][-260:])
-		high_of_52week=max(df["Adj Close"][-260:])
-		try:
-			moving_average_200_20 = df["SMA_200"][-20]
+    # Condition 2
+    if not (latest['Close'] >= 1.3 * latest['52W_Low']):
+        print(f"❌ {ticker}: Close < 1.3 * 52W_Low (Close: {latest['Close']}, 52W_Low: {latest['52W_Low']})")
+        return False
 
-		except Exception:
-			moving_average_200_20=0
+    # Condition 3
+    if not (latest['Close'] >= 0.75 * latest['52W_High']):
+        print(f"❌ {ticker}: Close < 0.75 * 52W_High (Close: {latest['Close']}, 52W_High: {latest['52W_High']})")
+        return False
 
-		#Condition 1: Current Price > 150 SMA and > 200 SMA
-		if(currentClose>moving_average_150>moving_average_200):
-			cond_1=True
-		else:
-			cond_1=False
-		#Condition 2: 150 SMA and > 200 SMA
-		if(moving_average_150>moving_average_200):
-			cond_2=True
-		else:
-			cond_2=False
-		#Condition 3: 200 SMA trending up for at least 1 month (ideally 4-5 months)
-		if(moving_average_200>moving_average_200_20):
-			cond_3=True
-		else:
-			cond_3=False
-		#Condition 4: 50 SMA> 150 SMA and 50 SMA> 200 SMA
-		if(moving_average_50>moving_average_150>moving_average_200):
-			#print("Condition 4 met")
-			cond_4=True
-		else:
-			#print("Condition 4 not met")
-			cond_4=False
-		#Condition 5: Current Price > 50 SMA
-		if(currentClose>moving_average_50):
-			cond_5=True
-		else:
-			cond_5=False
-		#Condition 6: Current Price is at least 30% above 52 week low (Many of the best are up 100-300% before coming out of consolidation)
-		if(currentClose>=(1.3*low_of_52week)):
-			cond_6=True
-		else:
-			cond_6=False
-		#Condition 7: Current Price is within 25% of 52 week high
-		if(currentClose>=(.75*high_of_52week)):
-			cond_7=True
-		else:
-			cond_7=False
-		#Condition 8: IBD RS rating >70 and the higher the better
-		if(RS_Rating>70):
-			cond_8=True
-		else:
-			cond_8=False
-		
-		if(cond_1 and cond_2 and cond_3 and cond_4 and cond_5 and cond_6 and cond_7 and cond_8):
-			exportList = exportList.append({'Stock': stock, "RS_Rating": RS_Rating, "50 Day MA": moving_average_50, "150 Day Ma": moving_average_150, "200 Day MA": moving_average_200, "52 Week Low": low_of_52week, "52 week High": high_of_52week}, ignore_index=True)
-	except Exception:
-		print("No data on "+stock)
+    # Condition 4
+    if not (ma_200_now > ma_200_past):
+        print(f"❌ {ticker}: 200MA not trending up (Now: {ma_200_now}, 21 days ago: {ma_200_past})")
+        return False
 
-print(exportList)
+    # Condition 5 (Optional RSI)
+    if not (latest['RSI'] > 70):
+        print(f"❌ {ticker}: RSI ≤ 70 (RSI: {latest['RSI']})")
+        return False
 
-newFile=os.path.dirname(filePath)+"/ScreenOutput.xlsx"
+    return True
 
-writer = ExcelWriter(newFile, engine='openpyxl')
-exportList.to_excel(writer, sheet_name="Sheet1")
-writer.close()
+# Loop through tickers and apply screener
+for ticker in stocks:
+    try:
+        df = pd.read_excel(file_path, sheet_name=ticker)
+        df.dropna(subset=['50MA', '150MA', '200MA', '52W_Low', '52W_High', 'RSI'], inplace=True)
+
+        if not df.empty and meets_minervini_criteria(df, ticker):
+            screened_stocks.append(ticker)
+    except Exception as e:
+        print(f"❌ Error processing {ticker}: {e}")
+
+# Display results
+print("\n✅ Stocks meeting Minervini's trend template:")
+for stock in screened_stocks:
+    print(f"✔ {stock}")
+
+if not screened_stocks:
+    print("⚠ No stocks met the criteria.")

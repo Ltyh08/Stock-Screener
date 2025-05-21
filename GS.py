@@ -37,6 +37,7 @@ for ticker in stocks:
     df['5MA'] = df['Adj Close'].rolling(window=5).mean()
     df['20MA'] = df['Adj Close'].rolling(window=20).mean()
     df['50MA'] = df['Adj Close'].rolling(window=50).mean()
+    df['150MA'] = df['Adj Close'].rolling(window=150).mean()
     df['200MA'] = df['Adj Close'].rolling(window=200).mean()
 
     #High Lows
