@@ -3,6 +3,7 @@ import numpy as np
 import yfinance as yf
 import datetime as dt
 import os
+import time
 from dotenv import load_dotenv
 
 # Load .env file and get the Excel output path
@@ -24,9 +25,10 @@ if not os.path.exists(file_path):
         pass  # Create an empty Excel file
 
 # Loop through each stock ticker and fetch data
-for ticker in stocks:
-    print(f"\nFetching data for {ticker}...")
+for i, ticker in enumerate(stocks, start=1):
+    print(f"\nFetching data for {ticker} ({i}/{len(stocks)})...")
     df = yf.download(ticker, start=start, end=now, auto_adjust=False)
+    df.reset_index(inplace=True)  # 👈 This adds 'Date' as a normal column
 
     if df.empty:
         print(f"No data found for {ticker}")
@@ -40,7 +42,7 @@ for ticker in stocks:
     df['150MA'] = df['Adj Close'].rolling(window=150).mean()
     df['200MA'] = df['Adj Close'].rolling(window=200).mean()
 
-    #High Lows
+    # 52-week Highs and Lows
     df['52W_High'] = df['Adj Close'].rolling(window=252).max()
     df['52W_Low'] = df['Adj Close'].rolling(window=252).min()
 
@@ -52,19 +54,17 @@ for ticker in stocks:
     df['UpperBand'] = df['20MA'] + 2 * df['STD20']
     df['LowerBand'] = df['20MA'] - 2 * df['STD20']
 
-    # Daily Return in %
+    # Daily Return (%)
     df['Daily_Return (%)'] = df['Adj Close'].pct_change() * 100
 
     # RSI (14-day)
     delta = df['Adj Close'].diff()
     gain = delta.where(delta > 0, 0)
     loss = -delta.where(delta < 0, 0)
-
     avg_gain = gain.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
     avg_loss = loss.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
     rs = avg_gain / avg_loss
     df['RSI'] = 100 - (100 / (1 + rs))
-
 
     # Volatility (20-day)
     df['Volatility_20D'] = df['Adj Close'].rolling(window=20).std()
@@ -74,17 +74,26 @@ for ticker in stocks:
     df['EMA26'] = df['Adj Close'].ewm(span=26, adjust=False).mean()
     df['MACD'] = df['EMA12'] - df['EMA26']
     df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
-    
-    #ATR
+
+    # ATR (14-day)
     df['H-L'] = df['High'] - df['Low']
     df['H-PC'] = abs(df['High'] - df['Close'].shift(1))
     df['L-PC'] = abs(df['Low'] - df['Close'].shift(1))
     df['TR'] = df[['H-L', 'H-PC', 'L-PC']].max(axis=1)
     df['ATR_14'] = df['TR'].rolling(window=14).mean()
 
+    # Save to Excel sheet named after the ticker, replacing the sheet but preserving workbook
+    # Drop rows with any missing data
+    df.dropna(inplace=True)
 
     # Save to Excel sheet named after the ticker, replacing the sheet but preserving workbook
     with pd.ExcelWriter(file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
         df.to_excel(writer, sheet_name=ticker)
+
+
+    # Pause after every 5 tickers
+    if i % 5 == 0:
+        print(f"\n⏸️ Pausing for 15 seconds to avoid rate limits...")
+        time.sleep(15)
 
 print(f"\n✅ All data written to {file_path} without overwriting formatting.")
