@@ -13,8 +13,9 @@ def meets_criteria(df, ticker=None):
         latest['Close'] >= 1.3 * latest['52W_Low'],
         latest['Close'] >= 0.75 * latest['52W_High'],
         ma_200_now > ma_200_past,
+        latest['RSI'] > 50
     ]
 
     return all(conditions)
 
- # python BT.py --strategy MMSS --holding_days 30
+ # python BT.py --strategy MMSS --holding_days 50

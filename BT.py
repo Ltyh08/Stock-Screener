@@ -36,7 +36,7 @@ def backtest_strategy(strategy_func, holding_days=30):
             df.columns = df.columns.str.strip()
             df.dropna(subset=['Close'], inplace=True)
 
-            i = 220  # start after enough data for moving averages
+            i = 220
             while i < len(df) - holding_days:
                 if strategy_func(df.iloc[:i + 1], ticker):
                     entry_date = df.loc[i, 'Date']
@@ -47,7 +47,7 @@ def backtest_strategy(strategy_func, holding_days=30):
                     exit_price = df.loc[exit_index, 'Close']
                     ret = (exit_price - entry_price) / entry_price * 100
 
-                    print(f"✅ Signal found for {ticker} on {entry_date} @ {entry_price:.2f}")
+                    
 
                     trade_log.append({
                         'Ticker': ticker,
@@ -58,14 +58,13 @@ def backtest_strategy(strategy_func, holding_days=30):
                         'Return (%)': round(ret, 2)
                     })
 
-                    i = exit_index  # Skip ahead after holding period
+                    i = exit_index
                 else:
-                    i += 1  # No signal, move forward
+                    i += 1
         except Exception as e:
             print(f"❌ Error processing {ticker}: {e}")
 
     return pd.DataFrame(trade_log)
-
 
 # =====================
 # ▶️ Run Backtest
@@ -91,16 +90,38 @@ if __name__ == "__main__":
 
         print("\n📊 Summary:")
         print(f"Total Trades: {len(results_df)}")
-        print(f"Average Return: {results_df['Return (%)'].mean():.2f}%")
-        print(f"Win Rate: {(results_df['Return (%)'] > 0).mean() * 100:.2f}%")
+        avg_return = results_df['Return (%)'].mean()
+        win_rate = (results_df['Return (%)'] > 0).mean() * 100
+        print(f"Average Return: {avg_return:.2f}%")
+        print(f"Win Rate: {win_rate:.2f}%")
 
-        # Save results using strategy name
+        # 🔄 ADDED: Average return by ticker
+        avg_by_ticker = results_df.groupby('Ticker')['Return (%)'].mean().reset_index()
+        avg_by_ticker.rename(columns={'Return (%)': 'Average Return (%)'}, inplace=True)
+
+        print("\n📈 Average Return by Ticker:")
+        for _, row in avg_by_ticker.iterrows():
+            print(f"{row['Ticker']} Average Return: {row['Average Return (%)']:.2f}%")
+
+        # 🔄 MODIFIED: Export results and summary
         output_dir = "backtest_results"
         os.makedirs(output_dir, exist_ok=True)
-
-        # Construct file path based on strategy name
         output_path = os.path.join(output_dir, f"{args.strategy}.xlsx")
 
-        # Export to Excel
-        results_df.to_excel(output_path, index=False, engine="openpyxl")
+        # Create summary table
+        summary_metrics = pd.DataFrame({
+            'Metric': ['Total Trades', 'Average Return (%)', 'Win Rate (%)'],
+            'Value': [len(results_df), round(avg_return, 2), round(win_rate, 2)]
+        })
+
+        with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
+            # Sheet 1: Individual trades
+            results_df.to_excel(writer, sheet_name="Trades", index=False)
+
+            # Sheet 2: Ticker performance and overall metrics
+            avg_by_ticker.to_excel(writer, sheet_name="Summary", index=False, startrow=0)
+
+            # Append summary metrics just below average return table
+            summary_metrics.to_excel(writer, sheet_name="Summary", index=False, startrow=len(avg_by_ticker) + 3)
+
         print(f"✅ Results successfully saved to: {output_path}")
