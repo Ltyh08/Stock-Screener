@@ -25,46 +25,76 @@ def load_strategy(strategy_name):
 # =====================
 # ♻️ Backtest Function
 # =====================
-def backtest_strategy(strategy_func, holding_days=30):
+def backtest_strategy(strategy_func, starting_cash, risk_pct, stop_loss_pct, take_profit_pct):
     xls = pd.ExcelFile(file_path)
     tickers = xls.sheet_names
     trade_log = []
+    cash = starting_cash
 
     for ticker in tickers:
         try:
             df = pd.read_excel(file_path, sheet_name=ticker)
             df.columns = df.columns.str.strip()
             df.dropna(subset=['Close'], inplace=True)
+            df.reset_index(drop=True, inplace=True)
 
-            i = 220
-            while i < len(df) - holding_days:
+            i = 220  # Lookback window
+            while i < len(df) - 1:
                 if strategy_func(df.iloc[:i + 1], ticker):
                     entry_date = df.loc[i, 'Date']
                     entry_price = df.loc[i, 'Close']
-                    exit_index = i + holding_days
 
-                    exit_date = df.loc[exit_index, 'Date']
-                    exit_price = df.loc[exit_index, 'Close']
-                    ret = (exit_price - entry_price) / entry_price * 100
+                    max_risk_cash = (cash * risk_pct) / 100
+                    num_shares = max_risk_cash // entry_price
 
-                    
+                    if num_shares == 0:
+                        i += 1
+                        continue
+
+                    invested_amount = num_shares * entry_price
+                    stop_price = entry_price * (1 - stop_loss_pct / 100)
+                    target_price = entry_price * (1 + take_profit_pct / 100)
+
+                    exit_price = None
+                    exit_date = None
+
+                    for j in range(i + 1, len(df)):
+                        price = df.loc[j, 'Close']
+                        if price <= stop_price:
+                            exit_price = price
+                            exit_date = df.loc[j, 'Date']
+                            break
+                        elif price >= target_price:
+                            exit_price = price
+                            exit_date = df.loc[j, 'Date']
+                            break
+
+                    if exit_price is None:
+                        i += 1
+                        continue
+
+                    ret_pct = (exit_price - entry_price) / entry_price * 100
+                    cash += num_shares * (exit_price - entry_price)
 
                     trade_log.append({
                         'Ticker': ticker,
                         'Entry Date': entry_date,
                         'Entry Price': entry_price,
+                        'Shares': int(num_shares),
                         'Exit Date': exit_date,
                         'Exit Price': exit_price,
-                        'Return (%)': round(ret, 2)
+                        'Return (%)': round(ret_pct, 2),
+                        'Profit/Loss': round(num_shares * (exit_price - entry_price), 2),
+                        'Cash After Trade': round(cash, 2)
                     })
 
-                    i = exit_index
+                    i = j  # skip to after exit
                 else:
                     i += 1
         except Exception as e:
             print(f"❌ Error processing {ticker}: {e}")
 
-    return pd.DataFrame(trade_log)
+    return pd.DataFrame(trade_log), cash
 
 # =====================
 # ▶️ Run Backtest
@@ -72,15 +102,24 @@ def backtest_strategy(strategy_func, holding_days=30):
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Backtest stock strategy")
+    parser = argparse.ArgumentParser(description="Backtest stock strategy with risk management")
     parser.add_argument("--strategy", type=str, required=True, help="Name of the strategy module (e.g. minervini)")
-    parser.add_argument("--holding_days", type=int, default=30, help="Holding period after entry")
+    parser.add_argument("--starting_cash", type=float, default=10000, help="Initial capital")
+    parser.add_argument("--risk_pct", type=float, default=10, help="Capital % to allocate per trade")
+    parser.add_argument("--stop_loss", type=float, default=5, help="Stop loss %")
+    parser.add_argument("--take_profit", type=float, default=10, help="Take profit %")
     args = parser.parse_args()
 
     print(f"\n📌 Using strategy: {args.strategy}")
     strategy_func = load_strategy(args.strategy)
 
-    results_df = backtest_strategy(strategy_func, holding_days=args.holding_days)
+    results_df, final_cash = backtest_strategy(
+        strategy_func,
+        starting_cash=args.starting_cash,
+        risk_pct=args.risk_pct,
+        stop_loss_pct=args.stop_loss,
+        take_profit_pct=args.take_profit
+    )
 
     if results_df.empty:
         print("⚠ No trades met the strategy criteria.")
@@ -89,13 +128,18 @@ if __name__ == "__main__":
         print(results_df)
 
         print("\n📊 Summary:")
-        print(f"Total Trades: {len(results_df)}")
+        total_trades = len(results_df)
         avg_return = results_df['Return (%)'].mean()
         win_rate = (results_df['Return (%)'] > 0).mean() * 100
+        total_profit = results_df['Profit/Loss'].sum()
+
+        print(f"Total Trades: {total_trades}")
         print(f"Average Return: {avg_return:.2f}%")
         print(f"Win Rate: {win_rate:.2f}%")
+        print(f"Final Cash: ${final_cash:,.2f}")
+        print(f"Total Profit: ${total_profit:,.2f}")
 
-        # 🔄 ADDED: Average return by ticker
+        # Grouped summary by ticker
         avg_by_ticker = results_df.groupby('Ticker')['Return (%)'].mean().reset_index()
         avg_by_ticker.rename(columns={'Return (%)': 'Average Return (%)'}, inplace=True)
 
@@ -103,25 +147,19 @@ if __name__ == "__main__":
         for _, row in avg_by_ticker.iterrows():
             print(f"{row['Ticker']} Average Return: {row['Average Return (%)']:.2f}%")
 
-        # 🔄 MODIFIED: Export results and summary
+        # Export to Excel
         output_dir = "backtest_results"
         os.makedirs(output_dir, exist_ok=True)
         output_path = os.path.join(output_dir, f"{args.strategy}.xlsx")
 
-        # Create summary table
         summary_metrics = pd.DataFrame({
-            'Metric': ['Total Trades', 'Average Return (%)', 'Win Rate (%)'],
-            'Value': [len(results_df), round(avg_return, 2), round(win_rate, 2)]
+            'Metric': ['Total Trades', 'Average Return (%)', 'Win Rate (%)', 'Final Cash', 'Total Profit'],
+            'Value': [total_trades, round(avg_return, 2), round(win_rate, 2), round(final_cash, 2), round(total_profit, 2)]
         })
 
         with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
-            # Sheet 1: Individual trades
             results_df.to_excel(writer, sheet_name="Trades", index=False)
-
-            # Sheet 2: Ticker performance and overall metrics
             avg_by_ticker.to_excel(writer, sheet_name="Summary", index=False, startrow=0)
-
-            # Append summary metrics just below average return table
             summary_metrics.to_excel(writer, sheet_name="Summary", index=False, startrow=len(avg_by_ticker) + 3)
 
         print(f"✅ Results successfully saved to: {output_path}")

@@ -18,4 +18,5 @@ def meets_criteria(df, ticker=None):
 
     return all(conditions)
 
- # python BT.py --strategy MMSS --holding_days 50
+ # python BT.py --strategy MMSS --starting_cash 10000 --risk_pct 10 --stop_loss 20 --take_profit 30
+
